@@ -30,7 +30,7 @@ final class always_on_clockUITests: XCTestCase {
         app.launch()
 
         let time = app.otherElements["clock.time"]
-        let seconds = app.staticTexts["clock.seconds"]
+        let seconds = app.descendants(matching: .any)["clock.seconds"]
         XCTAssertTrue(time.waitForExistence(timeout: 10))
         XCTAssertTrue(seconds.exists)
         let initialSeconds = seconds.label
@@ -98,8 +98,70 @@ final class always_on_clockUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.otherElements["clock.time"].waitForExistence(timeout: 10))
         app.buttons["clock.settings"].tap()
+        let settings = app.collectionViews.firstMatch
+        for _ in 0..<4 where !app.buttons["settings.about"].isHittable { settings.swipeUp() }
         app.buttons["settings.about"].tap()
         XCTAssertTrue(app.staticTexts["A bedside clock"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["POWER & BATTERY"].exists)
+    }
+
+    @MainActor
+    func testOptionalClockFeaturesPersist() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+        app.buttons["clock.settings"].tap()
+        let settings = app.collectionViews.firstMatch
+        let date = app.switches["settings.showDate"]
+        settings.swipeUp()
+        settings.swipeUp()
+        for _ in 0..<4 where !date.isHittable { settings.swipeUp() }
+        XCTAssertTrue(date.isHittable)
+        let battery = app.switches["settings.showBattery"]
+        let movement = app.switches["settings.displayMovement"]
+        for toggle in [date, battery, movement] {
+            if !toggle.isHittable { settings.swipeUp() }
+            if (toggle.value as? String) != "1" {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+            }
+            let enabled = expectation(for: NSPredicate(format: "value == %@", "1"), evaluatedWith: toggle)
+            wait(for: [enabled], timeout: 5)
+        }
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(app.staticTexts["clock.date"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.otherElements["clock.battery"].exists)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["clock.date"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["clock.battery"].exists)
+        app.buttons["clock.settings"].tap()
+        for _ in 0..<4 where !movement.isHittable { settings.swipeUp() }
+        XCTAssertEqual(movement.value as? String, "1")
+    }
+
+    @MainActor
+    func testThemeCyclingAndPersistence() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+        let themeButton = app.buttons["clock.theme"]
+        let themeName = app.staticTexts["clock.themeName"]
+        XCTAssertTrue(themeButton.waitForExistence(timeout: 10))
+        for _ in 0..<4 where !themeName.label.contains("AMBER / RUST") {
+            themeButton.tap()
+        }
+        XCTAssertTrue(themeName.label.contains("AMBER / RUST"))
+        for expected in ["CYBERPUNK 2077", "BLADE RUNNER 1982", "BLADE RUNNER 2049"] {
+            themeButton.tap()
+            XCTAssertTrue(themeName.label.contains(expected))
+        }
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(themeButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(themeName.label.contains("BLADE RUNNER 2049"))
+        themeButton.tap()
+        XCTAssertTrue(themeName.label.contains("AMBER / RUST"))
     }
 }

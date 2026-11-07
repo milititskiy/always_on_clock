@@ -100,4 +100,25 @@ struct always_on_clockTests {
         #expect(uk.period == nil)
         #expect(uk.hour == "00")
     }
+
+    @Test func movementChangesEveryFiveMinutesAndStaysBounded() {
+        let start = Date(timeIntervalSince1970: 0)
+        #expect(clockMovement(for: start, enabled: false) == .zero)
+        #expect(clockMovement(for: start.addingTimeInterval(299), enabled: true) == .zero)
+        #expect(clockMovement(for: start.addingTimeInterval(300), enabled: true) == CGSize(width: 4, height: 0))
+        #expect(clockMovement(for: start.addingTimeInterval(2_700), enabled: true) == .zero)
+        for interval in -9...9 {
+            let position = clockMovement(for: start.addingTimeInterval(Double(interval * 300)), enabled: true)
+            #expect(abs(position.width) <= 4 && abs(position.height) <= 4)
+        }
+    }
+
+    @Test func themesUseRequestedColorsAndCycleInOrder() {
+        let themes = ThemeMode.allCases
+        #expect(themes == [.amber, .cyberpunk, .bladeRunner1982, .bladeRunner2049])
+        #expect(themes.map(\.backgroundHex) == [0x08080A, 0x05050A, 0x0A0908, 0x0D0B0A])
+        #expect(themes.map(\.activeHex) == [0xC84B31, 0x00F0FF, 0xE2A03F, 0xFF5722])
+        #expect(themes.map(\.secondaryHex) == [0x4A3B32, 0x4A2E4B, 0x3D332A, 0x4D322A])
+        #expect(themes.map(\.next) == [.cyberpunk, .bladeRunner1982, .bladeRunner2049, .amber])
+    }
 }

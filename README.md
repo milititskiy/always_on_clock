@@ -1,10 +1,10 @@
 # Always On Clock
 
 A minimal bedside clock for iPhone, built with SwiftUI. The app displays the
-current time and seconds in amber on a near-black background, using the device's
+current time and seconds on a near-black background, using the device's
 locale and time zone. It supports both landscape orientations and iOS 16 or later.
 
-The original Clock Dots font is a monospaced, rounded-dot design with Latin
+The original Clock Dots font is a monospaced, circular-dot design with Latin
 letters, digits, and common punctuation. A matching font supplies faint unlit
 dots behind the time's ASCII digits; iOS supplies fallback glyphs without
 unlit dots for other writing systems. To regenerate both fonts, install `fonttools` and run
@@ -18,6 +18,14 @@ foregrounded, or iOS suspends it. Use Settings in the app to choose the time
 format and clock luminance. Luminance dims the clock UI only (10–100%), not the
 device display; adjust the device brightness in Control Center. The clock
 defaults to 50% luminance and follows the system time format.
+Tap **[THEME]** to cycle between Amber / Rust, Cyberpunk 2077, Blade Runner
+1982, and Blade Runner 2049. The selected palette persists between launches.
+The bright cyan palette can be more conspicuous in a dark room; use the
+luminance control to suit your surroundings.
+Settings also offer an optional date, battery and charging indicator, and
+periodic movement of the clock. Movement shifts the central clock by up to
+four points every five minutes; it does not guarantee protection against
+OLED burn-in. Other interface elements do not move.
 
 The first launch explains power, charging, and OLED display considerations;
 reopen it from Settings > About & safe use. Keeping the screen on uses extra

@@ -1,21 +1,5 @@
 import SwiftUI
 
-private enum NightPalette {
-    static let background = Color(hex: 0x08080A)
-    static let active = Color(hex: 0xC84B31)
-    static let secondary = Color(hex: 0x4A3B32)
-}
-
-private extension Color {
-    init(hex: UInt32) {
-        self.init(
-            red: Double((hex >> 16) & 0xFF) / 255,
-            green: Double((hex >> 8) & 0xFF) / 255,
-            blue: Double(hex & 0xFF) / 255
-        )
-    }
-}
-
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.locale) private var locale
@@ -24,7 +8,17 @@ struct ContentView: View {
     @AppStorage("clockLuminance") private var luminance = 0.5
     @AppStorage("clockTimeFormat") private var timeFormat = ClockTimeFormat.system.rawValue
     @AppStorage("clockUsageAcknowledged") private var usageAcknowledged = false
+    @AppStorage("clockShowDate") private var showDate = false
+    @AppStorage("clockShowBattery") private var showBattery = false
+    @AppStorage("clockDisplayMovement") private var displayMovement = false
+    @AppStorage("clockTheme") private var themeName = ThemeMode.amber.rawValue
     @State private var showingSettings = false
+    @State private var batteryLevel: Float = -1
+    @State private var batteryState: UIDevice.BatteryState = .unknown
+
+    private var theme: ThemeMode {
+        ThemeMode(rawValue: themeName) ?? .amber
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -37,27 +31,38 @@ struct ContentView: View {
                     calendar: calendar
                 )
                 VStack(spacing: 0) {
-                    HeaderBar()
+                    HeaderBar(showBattery: showBattery, batteryLevel: batteryLevel, batteryState: batteryState)
                         .opacity(luminance)
 
-                    ClockDisplay(time: time, availableSize: geometry.size)
+                    ClockDisplay(time: time, date: timeline.date, showDate: showDate, availableSize: geometry.size)
+                        .offset(clockMovement(for: timeline.date, enabled: displayMovement))
                         .opacity(luminance)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    FooterBar(luminance: luminance) {
+                    FooterBar(luminance: luminance, cycleTheme: {
+                        themeName = theme.next.rawValue
+                    }, openSettings: {
                         showingSettings = true
-                    }
+                    })
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .overlay {
+                    CornerBrackets()
+                        .stroke(theme.secondary.opacity(0.65), lineWidth: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
         }
-        .background(NightPalette.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         .sheet(isPresented: $showingSettings) {
-            ClockSettingsView(luminance: $luminance, timeFormat: $timeFormat)
+            ClockSettingsView(luminance: $luminance, timeFormat: $timeFormat,
+                              showDate: $showDate, showBattery: $showBattery,
+                              displayMovement: $displayMovement)
         }
         .fullScreenCover(isPresented: Binding(
             get: { !usageAcknowledged },
@@ -71,33 +76,103 @@ struct ContentView: View {
             .preferredColorScheme(.dark)
             .interactiveDismissDisabled()
         }
-        .onAppear { updateIdleTimer() }
-        .onChange(of: scenePhase) { _ in updateIdleTimer() }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .onAppear { updateDeviceState() }
+        .onChange(of: scenePhase) { _ in updateDeviceState() }
+        .onChange(of: showBattery) { _ in updateDeviceState() }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryLevelDidChangeNotification)) { _ in
+            refreshBattery()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
+            refreshBattery()
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+            UIDevice.current.isBatteryMonitoringEnabled = false
+        }
+        .environment(\.clockTheme, theme)
     }
 
-    private func updateIdleTimer() {
+    private func updateDeviceState() {
         UIApplication.shared.isIdleTimerDisabled = scenePhase == .active
+        UIDevice.current.isBatteryMonitoringEnabled = scenePhase == .active && showBattery
+        refreshBattery()
+    }
+
+    private func refreshBattery() {
+        batteryLevel = UIDevice.current.batteryLevel
+        batteryState = UIDevice.current.batteryState
     }
 }
 
 private struct HeaderBar: View {
+    @Environment(\.clockTheme) private var theme
+    let showBattery: Bool
+    let batteryLevel: Float
+    let batteryState: UIDevice.BatteryState
+
     var body: some View {
-        HStack {
-            Text("1-BIT_SYS // 01")
-            Spacer()
-            Text("NIGHT_MODE: ACTIVE")
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(theme.active)
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                Text("1-BIT_SYS // \(theme.title)")
+                    .accessibilityIdentifier("clock.themeName")
+                Spacer(minLength: 4)
+                if showBattery {
+                    BatteryIndicator(level: batteryLevel, state: batteryState)
+                }
+                Text("NIGHT_MODE: ACTIVE")
+            }
+            Rectangle().fill(theme.secondary.opacity(0.6)).frame(height: 1)
         }
         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-        .foregroundStyle(NightPalette.secondary)
+        .foregroundStyle(theme.secondary)
         .lineLimit(1)
         .minimumScaleFactor(0.7)
-        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct BatteryIndicator: View {
+    let level: Float
+    let state: UIDevice.BatteryState
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("BAT")
+            if level >= 0 {
+                Text("\(Int((level * 100).rounded()))%")
+            } else {
+                Text("--%")
+            }
+            if state == .charging || state == .full {
+                Image(systemName: "bolt.fill")
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier("clock.battery")
+    }
+
+    private var accessibilityLabel: Text {
+        guard level >= 0 else { return Text("Battery level unavailable") }
+        let percent = Int((level * 100).rounded())
+        switch state {
+        case .charging: return Text("Battery \(percent) percent, charging")
+        case .full: return Text("Battery \(percent) percent, full")
+        case .unplugged: return Text("Battery \(percent) percent, unplugged")
+        default: return Text("Battery \(percent) percent")
+        }
     }
 }
 
 private struct ClockDisplay: View {
+    @Environment(\.clockTheme) private var theme
     let time: ClockTime
+    let date: Date
+    let showDate: Bool
     let availableSize: CGSize
 
     private var digitSize: CGFloat {
@@ -105,43 +180,57 @@ private struct ClockDisplay: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 0) {
-            HStack(spacing: 0) {
-                DotDigits(value: time.hour, size: digitSize)
-                BlinkingColon(isLit: time.secondNumber.isMultiple(of: 2), size: digitSize)
-                DotDigits(value: time.minute, size: digitSize)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(time.accessibilityLabel)
-            .accessibilityIdentifier("clock.time")
+        VStack(spacing: 2) {
+            HStack(alignment: .center, spacing: 0) {
+                HStack(spacing: 0) {
+                    DotDigits(value: time.hour, size: digitSize)
+                    BlinkingColon(isLit: time.secondNumber.isMultiple(of: 2), size: digitSize)
+                    DotDigits(value: time.minute, size: digitSize)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(time.accessibilityLabel)
+                .accessibilityIdentifier("clock.time")
 
-            VStack(alignment: .leading, spacing: 12) {
-                if let period = time.period {
-                    Text(period)
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .overlay(Rectangle().stroke(NightPalette.secondary, lineWidth: 1))
-                        .accessibilityIdentifier("clock.period")
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .center, spacing: 4) {
+                        Text("SEC")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(theme.secondary)
+                        DotDigits(value: time.second, size: min(digitSize * 0.23, 40))
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(time.second)
+                            .accessibilityIdentifier("clock.seconds")
+                    }
+                    .padding(6)
+                    .overlay(Rectangle().stroke(theme.secondary.opacity(0.8), lineWidth: 1))
+                    if let period = time.period {
+                        Text(period)
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .overlay(Rectangle().stroke(theme.secondary.opacity(0.8), lineWidth: 1))
+                            .accessibilityIdentifier("clock.period")
+                    }
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("SEC")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(NightPalette.secondary)
-                    Text(time.second)
-                        .font(.custom("ClockDots-Regular", size: min(digitSize * 0.23, 40)))
-                        .accessibilityIdentifier("clock.seconds")
-                }
+                .foregroundStyle(theme.active)
+                .padding(.leading, 14)
+                .fixedSize()
             }
-            .foregroundStyle(NightPalette.active)
-            .padding(.leading, 14)
-            .fixedSize()
+            .frame(maxWidth: .infinity)
+            if showDate {
+                Text(date, format: .dateTime.weekday(.wide).month(.wide).day())
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.active)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .accessibilityIdentifier("clock.date")
+            }
         }
-        .frame(maxWidth: .infinity)
     }
 }
 
 private struct DotDigits: View {
+    @Environment(\.clockTheme) private var theme
     let value: String
     let size: CGFloat
 
@@ -150,7 +239,7 @@ private struct DotDigits: View {
         for character in value {
             var part = AttributedString(String(character))
             part.foregroundColor = character.isASCII && character.isNumber
-                ? NightPalette.secondary.opacity(0.3) : .clear
+                ? theme.secondary.opacity(0.3) : .clear
             result += part
         }
         return result
@@ -162,8 +251,8 @@ private struct DotDigits: View {
                 .font(.custom("ClockDotsInactive-Regular", size: size))
             Text(value)
                 .font(.custom("ClockDots-Regular", size: size))
-                .foregroundStyle(NightPalette.active)
-                .shadow(color: NightPalette.active.opacity(0.3), radius: 3)
+                .foregroundStyle(theme.active)
+                .shadow(color: theme.active.opacity(0.3), radius: 3)
         }
         .fixedSize()
         .accessibilityHidden(true)
@@ -171,6 +260,7 @@ private struct DotDigits: View {
 }
 
 private struct BlinkingColon: View {
+    @Environment(\.clockTheme) private var theme
     let isLit: Bool
     let size: CGFloat
 
@@ -178,10 +268,10 @@ private struct BlinkingColon: View {
         let dotSize = size * 68 / 1024
         VStack(spacing: dotSize * 1.4) {
             ForEach(0..<2, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: dotSize * 0.15)
-                    .fill(isLit ? NightPalette.active : NightPalette.secondary.opacity(0.3))
+                Circle()
+                    .fill(isLit ? theme.active : theme.secondary.opacity(0.3))
                     .frame(width: dotSize, height: dotSize)
-                    .shadow(color: isLit ? NightPalette.active.opacity(0.3) : .clear, radius: 3)
+                    .shadow(color: isLit ? theme.active.opacity(0.3) : .clear, radius: 3)
             }
         }
         .frame(width: size * 0.27)
@@ -190,23 +280,40 @@ private struct BlinkingColon: View {
 }
 
 private struct FooterBar: View {
+    @Environment(\.clockTheme) private var theme
     let luminance: Double
+    let cycleTheme: () -> Void
     let openSettings: () -> Void
 
     var body: some View {
         VStack(spacing: 4) {
             Rectangle()
-                .fill(NightPalette.secondary.opacity(0.6))
+                .fill(theme.secondary.opacity(0.6))
                 .frame(height: 1)
             HStack {
                 Text("LUM: \(Int((luminance * 100).rounded()))% (NIGHT)")
-                    .foregroundStyle(NightPalette.secondary)
+                    .foregroundStyle(theme.secondary)
                     .opacity(luminance)
                     .accessibilityIdentifier("clock.luminance")
                 Spacer()
+                Button(action: cycleTheme) {
+                    Text("[THEME]")
+                        .foregroundStyle(theme.active)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .overlay(Rectangle().stroke(theme.secondary.opacity(0.8), lineWidth: 1))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Change theme")
+                .accessibilityValue(theme.title)
+                .accessibilityIdentifier("clock.theme")
                 Button(action: openSettings) {
                     Text("[SETTINGS]")
-                        .foregroundStyle(NightPalette.active)
+                        .foregroundStyle(theme.active)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .overlay(Rectangle().stroke(theme.secondary.opacity(0.8), lineWidth: 1))
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
                 }
@@ -218,10 +325,34 @@ private struct FooterBar: View {
     }
 }
 
+private struct CornerBrackets: Shape {
+    func path(in rect: CGRect) -> Path {
+        let length = min(10, rect.width / 4, rect.height / 4)
+        let inset = CGFloat(0.5)
+        let corners: [(CGPoint, CGFloat, CGFloat)] = [
+            (CGPoint(x: rect.minX + inset, y: rect.minY + inset), 1, 1),
+            (CGPoint(x: rect.maxX - inset, y: rect.minY + inset), -1, 1),
+            (CGPoint(x: rect.minX + inset, y: rect.maxY - inset), 1, -1),
+            (CGPoint(x: rect.maxX - inset, y: rect.maxY - inset), -1, -1)
+        ]
+        var path = Path()
+        for (corner, dx, dy) in corners {
+            path.move(to: CGPoint(x: corner.x + dx * length, y: corner.y))
+            path.addLine(to: corner)
+            path.addLine(to: CGPoint(x: corner.x, y: corner.y + dy * length))
+        }
+        return path
+    }
+}
+
 private struct ClockSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.clockTheme) private var theme
     @Binding var luminance: Double
     @Binding var timeFormat: String
+    @Binding var showDate: Bool
+    @Binding var showBattery: Bool
+    @Binding var displayMovement: Bool
 
     var body: some View {
         NavigationStack {
@@ -253,6 +384,18 @@ private struct ClockSettingsView: View {
                     .accessibilityIdentifier("settings.timeFormat")
                 }
 
+                Section("Clock display") {
+                    Toggle("Show date", isOn: $showDate)
+                        .accessibilityIdentifier("settings.showDate")
+                    Toggle("Show battery and charging status", isOn: $showBattery)
+                        .accessibilityIdentifier("settings.showBattery")
+                    Toggle("Move clock periodically", isOn: $displayMovement)
+                        .accessibilityIdentifier("settings.displayMovement")
+                    Text("Moves the clock slightly every five minutes. This does not guarantee protection from OLED burn-in.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section {
                     NavigationLink("About & safe use") {
                         ClockUsageView(isFirstLaunch: false)
@@ -260,7 +403,7 @@ private struct ClockSettingsView: View {
                     .accessibilityIdentifier("settings.about")
                 }
             }
-            .tint(NightPalette.active)
+            .tint(theme.active)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -274,6 +417,7 @@ private struct ClockSettingsView: View {
 }
 
 private struct ClockUsageView: View {
+    @Environment(\.clockTheme) private var theme
     let isFirstLaunch: Bool
     var acknowledge: (() -> Void)? = nil
 
@@ -282,7 +426,7 @@ private struct ClockUsageView: View {
             VStack(alignment: .leading, spacing: 22) {
                 Text("1-BIT_SYS // GUIDE")
                     .font(.system(.caption, design: .monospaced, weight: .bold))
-                    .foregroundStyle(NightPalette.active)
+                    .foregroundStyle(theme.active)
 
                 Text("A bedside clock")
                     .font(.system(.title2, design: .monospaced, weight: .bold))
@@ -299,20 +443,20 @@ private struct ClockUsageView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("APPLE GUIDANCE")
                         .font(.system(.caption, design: .monospaced, weight: .bold))
-                        .foregroundStyle(NightPalette.active)
+                        .foregroundStyle(theme.active)
                     Link("Battery charging and lifespan", destination: URL(string: "https://support.apple.com/en-us/105105")!)
                     Link("iPhone charging safety", destination: URL(string: "https://support.apple.com/guide/iphone/iph301fc905/ios")!)
                     Link("OLED display care", destination: URL(string: "https://support.apple.com/en-us/109039")!)
                 }
                 .font(.system(.subheadline, design: .monospaced))
-                .tint(NightPalette.active)
+                .tint(theme.active)
             }
             .frame(maxWidth: 700, alignment: .leading)
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
             .frame(maxWidth: .infinity)
         }
-        .background(NightPalette.background.ignoresSafeArea())
+        .background(theme.background.ignoresSafeArea())
         .navigationTitle(isFirstLaunch ? "Before you begin" : "About & safe use")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -323,12 +467,13 @@ private struct ClockUsageView: View {
                 }
             }
         }
-        .tint(NightPalette.active)
+        .tint(theme.active)
         .accessibilityIdentifier("usage.guide")
     }
 }
 
 private struct UsageSection: View {
+    @Environment(\.clockTheme) private var theme
     let title: LocalizedStringKey
     let text: LocalizedStringKey
 
@@ -336,7 +481,7 @@ private struct UsageSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.system(.caption, design: .monospaced, weight: .bold))
-                .foregroundStyle(NightPalette.active)
+                .foregroundStyle(theme.active)
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.85))
