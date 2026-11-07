@@ -8,9 +8,24 @@
 import Testing
 import UIKit
 import CoreText
+import SwiftUI
 @testable import always_on_clock
 
 struct always_on_clockTests {
+    @Test @MainActor func idleTimerTracksSceneActivity() {
+        let previousValue = UIApplication.shared.isIdleTimerDisabled
+        defer { UIApplication.shared.isIdleTimerDisabled = previousValue }
+
+        setClockIdleTimer(for: .active)
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+        setClockIdleTimer(for: .inactive)
+        #expect(!UIApplication.shared.isIdleTimerDisabled)
+        setClockIdleTimer(for: .background)
+        #expect(!UIApplication.shared.isIdleTimerDisabled)
+        setClockIdleTimer(for: .active)
+        #expect(UIApplication.shared.isIdleTimerDisabled)
+    }
+
     @Test func clockFontIsRegisteredAndContainsClockCharacters() throws {
         let uiFont = try #require(UIFont(name: "ClockDots-Regular", size: 64))
         #expect(uiFont.fontName == "ClockDots-Regular")

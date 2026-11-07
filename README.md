@@ -11,21 +11,33 @@ unlit dots for other writing systems. To regenerate both fonts, install `fonttoo
 `python3 tools/generate_clock_font.py`.
 
 Open `always_on_clock.xcodeproj` in Xcode, select a signing team and an iPhone,
-and run the `always_on_clock` scheme. The screen stays awake while the clock is
-active in the foreground; normal auto-lock behavior is restored when it is not.
+and run the `always_on_clock` scheme. The app asks iOS to keep the screen awake
+while the clock is active in the foreground; normal auto-lock behavior is restored when it is not.
 The app cannot keep the display on when the device is locked, another app is
 foregrounded, or iOS suspends it. Use Settings in the app to choose the time
-format and clock luminance. Luminance dims the clock UI only (10–100%), not the
-device display; adjust the device brightness in Control Center. The clock
+format and clock luminance. Luminance dims the clock screen, including its
+controls (10–100%), not the device display; adjust the device brightness in Control Center. The clock
 defaults to 50% luminance and follows the system time format.
+
+If the iPhone switches to Apple's StandBy screen, turn off StandBy in the
+iPhone's **Settings > StandBy**, unlock the phone, and reopen the clock. The
+app cannot disable StandBy itself or prevent manual locking, interruptions, or
+system-imposed sleep. Check the behavior on the actual device after changing
+the setting.
+
 Tap **[THEME]** to cycle between Amber / Rust, Cyberpunk 2077, Blade Runner
 1982, and Blade Runner 2049. The selected palette persists between launches.
+Tap **[CRT]** to toggle subtle scanlines over the clock; the choice is saved
+between launches and is off by default. This is a visual effect, not a way to
+prevent OLED burn-in.
 The bright cyan palette can be more conspicuous in a dark room; use the
 luminance control to suit your surroundings.
 Settings also offer an optional date, battery and charging indicator, and
 periodic movement of the clock. Movement shifts the central clock by up to
 four points every five minutes; it does not guarantee protection against
 OLED burn-in. Other interface elements do not move.
+The battery indicator shows `--%` when iOS cannot provide a level; the iOS
+simulator does not provide a real iPhone battery reading.
 
 The first launch explains power, charging, and OLED display considerations;
 reopen it from Settings > About & safe use. Keeping the screen on uses extra

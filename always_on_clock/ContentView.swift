@@ -12,6 +12,7 @@ struct ContentView: View {
     @AppStorage("clockShowBattery") private var showBattery = false
     @AppStorage("clockDisplayMovement") private var displayMovement = false
     @AppStorage("clockTheme") private var themeName = ThemeMode.amber.rawValue
+    @AppStorage("clockCRTEnabled") private var crtEnabled = false
     @State private var showingSettings = false
     @State private var batteryLevel: Float = -1
     @State private var batteryState: UIDevice.BatteryState = .unknown
@@ -38,18 +39,29 @@ struct ContentView: View {
                         .offset(clockMovement(for: timeline.date, enabled: displayMovement))
                         .opacity(luminance)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay {
+                            if crtEnabled {
+                                CRTScanlines()
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
 
-                    FooterBar(luminance: luminance, cycleTheme: {
+                    FooterBar(luminance: luminance, crtEnabled: crtEnabled, cycleTheme: {
                         themeName = theme.next.rawValue
+                    }, toggleCRT: {
+                        crtEnabled.toggle()
                     }, openSettings: {
                         showingSettings = true
                     })
+                    .opacity(luminance)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .overlay {
                     CornerBrackets()
                         .stroke(theme.secondary.opacity(0.65), lineWidth: 1)
+                        .opacity(luminance)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -76,26 +88,28 @@ struct ContentView: View {
             .preferredColorScheme(.dark)
             .interactiveDismissDisabled()
         }
-        .onAppear { updateDeviceState() }
-        .onChange(of: scenePhase) { _ in updateDeviceState() }
-        .onChange(of: showBattery) { _ in updateDeviceState() }
+        .onAppear { updateDeviceState(showBattery: showBattery, phase: scenePhase) }
+        .onChange(of: scenePhase) { phase in updateDeviceState(showBattery: showBattery, phase: phase) }
+        .onChange(of: showBattery) { enabled in updateDeviceState(showBattery: enabled, phase: scenePhase) }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryLevelDidChangeNotification)) { _ in
             refreshBattery()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
             refreshBattery()
         }
-        .onDisappear {
-            UIApplication.shared.isIdleTimerDisabled = false
-            UIDevice.current.isBatteryMonitoringEnabled = false
+        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
+            if showBattery && scenePhase == .active && batteryLevel < 0 {
+                refreshBattery()
+            }
         }
         .environment(\.clockTheme, theme)
     }
 
-    private func updateDeviceState() {
-        UIApplication.shared.isIdleTimerDisabled = scenePhase == .active
-        UIDevice.current.isBatteryMonitoringEnabled = scenePhase == .active && showBattery
-        refreshBattery()
+    private func updateDeviceState(showBattery: Bool, phase: ScenePhase) {
+        UIDevice.current.isBatteryMonitoringEnabled = showBattery && phase != .background
+        if UIDevice.current.isBatteryMonitoringEnabled {
+            refreshBattery()
+        }
     }
 
     private func refreshBattery() {
@@ -282,7 +296,9 @@ private struct BlinkingColon: View {
 private struct FooterBar: View {
     @Environment(\.clockTheme) private var theme
     let luminance: Double
+    let crtEnabled: Bool
     let cycleTheme: () -> Void
+    let toggleCRT: () -> Void
     let openSettings: () -> Void
 
     var body: some View {
@@ -293,7 +309,6 @@ private struct FooterBar: View {
             HStack {
                 Text("LUM: \(Int((luminance * 100).rounded()))% (NIGHT)")
                     .foregroundStyle(theme.secondary)
-                    .opacity(luminance)
                     .accessibilityIdentifier("clock.luminance")
                 Spacer()
                 Button(action: cycleTheme) {
@@ -308,6 +323,18 @@ private struct FooterBar: View {
                 .accessibilityLabel("Change theme")
                 .accessibilityValue(theme.title)
                 .accessibilityIdentifier("clock.theme")
+                Button(action: toggleCRT) {
+                    Text("[CRT]")
+                        .foregroundStyle(theme.active)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .overlay(Rectangle().stroke(crtEnabled ? theme.active : theme.secondary.opacity(0.8), lineWidth: 1))
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("CRT filter")
+                .accessibilityValue(crtEnabled ? Text("On") : Text("Off"))
+                .accessibilityIdentifier("clock.crt")
                 Button(action: openSettings) {
                     Text("[SETTINGS]")
                         .foregroundStyle(theme.active)
@@ -321,6 +348,18 @@ private struct FooterBar: View {
                 .accessibilityIdentifier("clock.settings")
             }
             .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        }
+    }
+}
+
+private struct CRTScanlines: View {
+    var body: some View {
+        Canvas { context, size in
+            var lines = Path()
+            for y in stride(from: CGFloat.zero, to: size.height, by: 4) {
+                lines.addRect(CGRect(x: 0, y: y, width: size.width, height: 1))
+            }
+            context.fill(lines, with: .color(.black.opacity(0.3)))
         }
     }
 }
@@ -367,7 +406,7 @@ private struct ClockSettingsView: View {
                     }
                     .accessibilityIdentifier("settings.luminance")
                     Text("Clock luminance: \(Int((luminance * 100).rounded()))%")
-                    Text("Dims the clock only; device brightness is unchanged.")
+                    Text("Dims the clock screen and controls; device brightness is unchanged.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } header: {
@@ -432,7 +471,9 @@ private struct ClockUsageView: View {
                     .font(.system(.title2, design: .monospaced, weight: .bold))
                     .foregroundStyle(.white)
 
-                UsageSection(title: "HOW IT WORKS", text: "Place your iPhone in landscape to show the time. The screen stays awake while the clock is active in the foreground. Locking the phone or leaving the app stops the clock display.")
+                UsageSection(title: "HOW IT WORKS", text: "Place your iPhone in landscape to show the time. The app asks iOS to keep the screen awake while it is active in the foreground. Locking the phone or leaving the app stops the clock display.")
+
+                UsageSection(title: "IF STANDBY APPEARS", text: "If iPhone shows Apple's StandBy screen instead, turn off StandBy in Settings > StandBy, then unlock the iPhone and reopen the clock. iOS may still lock the screen or interrupt the app.")
 
                 UsageSection(title: "POWER & BATTERY", text: "Keeping the screen on uses extra power. A connected charger may be useful for extended use. Batteries age over time; heat and charging patterns can affect their capacity and how long they last between charges. Apple says overnight charging is safe and recommends unplugging after a full charge when possible.")
 

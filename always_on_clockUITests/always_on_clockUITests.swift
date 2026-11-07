@@ -6,6 +6,7 @@
 //
 
 import XCTest
+import UIKit
 
 final class always_on_clockUITests: XCTestCase {
 
@@ -68,6 +69,69 @@ final class always_on_clockUITests: XCTestCase {
         app.buttons["24-hour"].tap()
         app.buttons["settings.done"].tap()
         XCTAssertFalse(app.staticTexts["clock.period"].exists)
+    }
+
+    @MainActor
+    func testLuminanceDimsClockControls() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+
+        let buttons = ["clock.theme", "clock.crt", "clock.settings"].map { app.buttons[$0] }
+        XCTAssertTrue(buttons[2].waitForExistence(timeout: 10))
+        let themeName = app.staticTexts["clock.themeName"]
+        for _ in 0..<4 where !themeName.label.contains("AMBER / RUST") {
+            buttons[0].tap()
+        }
+        XCTAssertTrue(themeName.label.contains("AMBER / RUST"))
+        if buttons[1].value as? String != "On" { buttons[1].tap() }
+        buttons[2].tap()
+        let slider = app.sliders["settings.luminance"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        slider.adjust(toNormalizedSliderPosition: 0)
+        app.buttons["settings.done"].tap()
+        let dimPeaks = try buttons.map { try peakColorComponent(in: $0.screenshot().image) }
+        XCTAssertTrue(buttons.allSatisfy(\.isHittable))
+        buttons[0].tap()
+        XCTAssertTrue(themeName.label.contains("CYBERPUNK"))
+        for _ in 0..<3 { buttons[0].tap() }
+        XCTAssertTrue(themeName.label.contains("AMBER / RUST"))
+        buttons[1].tap()
+        XCTAssertEqual(buttons[1].value as? String, "Off")
+        buttons[1].tap()
+        XCTAssertEqual(buttons[1].value as? String, "On")
+
+        buttons[2].tap()
+        slider.adjust(toNormalizedSliderPosition: 1)
+        app.buttons["settings.done"].tap()
+        let brightPeaks = try buttons.map { try peakColorComponent(in: $0.screenshot().image) }
+        for (dim, bright) in zip(dimPeaks, brightPeaks) {
+            XCTAssertGreaterThan(bright, dim * 2, "Control should visibly dim at 10% luminance")
+        }
+
+        buttons[0].tap()
+        XCTAssertTrue(app.staticTexts["clock.themeName"].label.contains("CYBERPUNK"))
+        buttons[1].tap()
+        XCTAssertEqual(buttons[1].value as? String, "Off")
+    }
+
+    private func peakColorComponent(in image: UIImage) throws -> Int {
+        let cgImage = try XCTUnwrap(image.cgImage)
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        try pixels.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            ))
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        return stride(from: 0, to: pixels.count, by: 4).reduce(0) { peak, index in
+            max(peak, Int(pixels[index]), Int(pixels[index + 1]), Int(pixels[index + 2]))
+        }
     }
 
     @MainActor
@@ -141,6 +205,46 @@ final class always_on_clockUITests: XCTestCase {
     }
 
     @MainActor
+    func testBatteryPercentageOnDevice() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Battery level must be verified on a physical iPhone.")
+        #else
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+
+        app.buttons["clock.settings"].tap()
+        let settings = app.collectionViews.firstMatch
+        let toggle = app.switches["settings.showBattery"]
+        for _ in 0..<4 where !toggle.isHittable { settings.swipeUp() }
+        XCTAssertTrue(toggle.isHittable)
+        if toggle.value as? String == "1" {
+            toggle.tap()
+        }
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "1")
+        app.buttons["settings.done"].tap()
+
+        let battery = app.otherElements["clock.battery"]
+        XCTAssertTrue(battery.waitForExistence(timeout: 10))
+        let available = NSPredicate(format: "label MATCHES %@", "Battery (100|[0-9]{1,2}) percent.*")
+        expectation(for: available, evaluatedWith: battery)
+        waitForExpectations(timeout: 20)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        expectation(for: available, evaluatedWith: battery)
+        waitForExpectations(timeout: 20)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(battery.waitForExistence(timeout: 10))
+        expectation(for: available, evaluatedWith: battery)
+        waitForExpectations(timeout: 20)
+        #endif
+    }
+
+    @MainActor
     func testThemeCyclingAndPersistence() throws {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
@@ -163,5 +267,37 @@ final class always_on_clockUITests: XCTestCase {
         XCTAssertTrue(themeName.label.contains("BLADE RUNNER 2049"))
         themeButton.tap()
         XCTAssertTrue(themeName.label.contains("AMBER / RUST"))
+    }
+
+    @MainActor
+    func testCRTFilterToggleAndPersistence() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+
+        let crt = app.buttons["clock.crt"]
+        let theme = app.buttons["clock.theme"]
+        let settings = app.buttons["clock.settings"]
+        XCTAssertTrue(crt.waitForExistence(timeout: 10))
+        XCTAssertTrue(crt.isHittable)
+        if crt.value as? String == "On" { crt.tap() }
+        XCTAssertEqual(crt.value as? String, "Off")
+
+        crt.tap()
+        XCTAssertEqual(crt.value as? String, "On")
+        theme.tap()
+        XCTAssertTrue(app.otherElements["clock.time"].exists)
+        XCTAssertTrue(settings.isHittable)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(crt.waitForExistence(timeout: 10))
+        XCTAssertEqual(crt.value as? String, "On")
+        crt.tap()
+        XCTAssertEqual(crt.value as? String, "Off")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(crt.waitForExistence(timeout: 10))
+        XCTAssertEqual(crt.value as? String, "Off")
     }
 }
