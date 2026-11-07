@@ -23,21 +23,83 @@ final class always_on_clockUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testClockInBothLandscapeOrientations() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        let time = app.otherElements["clock.time"]
+        let seconds = app.staticTexts["clock.seconds"]
+        XCTAssertTrue(time.waitForExistence(timeout: 10))
+        XCTAssertTrue(seconds.exists)
+        let initialSeconds = seconds.label
+        let secondsChanged = expectation(for: NSPredicate(format: "label != %@", initialSeconds),
+                                         evaluatedWith: seconds)
+        wait(for: [secondsChanged], timeout: 5)
+        XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
+
+        XCUIDevice.shared.orientation = .landscapeRight
+        XCTAssertTrue(time.exists)
+        XCTAssertTrue(seconds.exists)
+        XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
     }
 
     @MainActor
-    func testLaunchPerformance() throws {
-        if #available(macOS 10.15, iOS 13.0, tvOS 13.0, watchOS 7.0, *) {
-            // This measures how long it takes to launch your application.
-            measure(metrics: [XCTApplicationLaunchMetric()]) {
-                XCUIApplication().launch()
-            }
+    func testSettingsPersist() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+        app.buttons["clock.settings"].tap()
+        let slider = app.sliders["settings.luminance"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        slider.adjust(toNormalizedSliderPosition: 0)
+        app.buttons["12-hour"].tap()
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(app.staticTexts["clock.period"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["clock.luminance"].label.contains("10%"))
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["clock.period"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["clock.luminance"].label.contains("10%"))
+        app.buttons["clock.settings"].tap()
+        app.buttons["24-hour"].tap()
+        app.buttons["settings.done"].tap()
+        XCTAssertFalse(app.staticTexts["clock.period"].exists)
+    }
+
+    @MainActor
+    func testUsageGuideAndSettingsAccess() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "NO"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["A bedside clock"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["POWER & BATTERY"].exists)
+        XCTAssertTrue(app.staticTexts["SAFE CHARGING"].exists)
+        XCTAssertTrue(app.staticTexts["DISPLAY CARE"].exists)
+        let guide = app.scrollViews["usage.guide"]
+        let batteryLink = app.buttons["Battery charging and lifespan"]
+        let safetyLink = app.buttons["iPhone charging safety"]
+        let displayLink = app.buttons["OLED display care"]
+        for _ in 0..<8 where !displayLink.isHittable {
+            guide.swipeUp()
         }
+        XCTAssertTrue(batteryLink.isHittable)
+        XCTAssertTrue(safetyLink.isHittable)
+        XCTAssertTrue(displayLink.isHittable)
+        app.buttons["usage.continue"].tap()
+        XCTAssertTrue(app.otherElements["clock.time"].waitForExistence(timeout: 10))
+
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        XCTAssertTrue(app.otherElements["clock.time"].waitForExistence(timeout: 10))
+        app.buttons["clock.settings"].tap()
+        app.buttons["settings.about"].tap()
+        XCTAssertTrue(app.staticTexts["A bedside clock"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["POWER & BATTERY"].exists)
     }
 }
