@@ -6,6 +6,11 @@ struct ContentView: View {
     @Environment(\.timeZone) private var timeZone
     @Environment(\.calendar) private var calendar
     @AppStorage("clockLuminance") private var luminance = 0.5
+    @AppStorage("clockScheduleEnabled") private var scheduleEnabled = false
+    @AppStorage("clockNightStart") private var nightStart = 22 * 60
+    @AppStorage("clockDayStart") private var dayStart = 7 * 60
+    @AppStorage("clockDayLuminance") private var dayLuminance = 0.5
+    @AppStorage("clockNightLuminance") private var nightLuminance = 0.15
     @AppStorage("clockTimeFormat") private var timeFormat = ClockTimeFormat.system.rawValue
     @AppStorage("clockUsageAcknowledged") private var usageAcknowledged = false
     @AppStorage("clockShowDate") private var showDate = false
@@ -13,6 +18,7 @@ struct ContentView: View {
     @AppStorage("clockDisplayMovement") private var displayMovement = false
     @AppStorage("clockTheme") private var themeName = ThemeMode.amber.rawValue
     @AppStorage("clockCRTEnabled") private var crtEnabled = false
+    @AppStorage("clockSizeScale") private var sizeScale = 1.0
     @State private var showingSettings = false
     @State private var batteryLevel: Float = -1
     @State private var batteryState: UIDevice.BatteryState = .unknown
@@ -31,13 +37,19 @@ struct ContentView: View {
                     timeZone: timeZone,
                     calendar: calendar
                 )
+                let schedule = ClockLuminanceSchedule(
+                    enabled: scheduleEnabled, nightStart: nightStart, dayStart: dayStart,
+                    manualLuminance: luminance, dayLuminance: dayLuminance, nightLuminance: nightLuminance
+                )
+                let mode = schedule.mode(at: timeline.date, calendar: calendar, timeZone: timeZone)
+                let effectiveLuminance = schedule.luminance(for: mode)
                 VStack(spacing: 0) {
-                    HeaderBar(showBattery: showBattery, batteryLevel: batteryLevel, batteryState: batteryState)
-                        .opacity(luminance)
+                    HeaderBar(showBattery: showBattery, batteryLevel: batteryLevel, batteryState: batteryState, mode: mode)
+                        .opacity(effectiveLuminance)
 
-                    ClockDisplay(time: time, date: timeline.date, showDate: showDate, availableSize: geometry.size)
+                    ClockDisplay(time: time, date: timeline.date, showDate: showDate, availableSize: geometry.size, scale: sizeScale)
                         .offset(clockMovement(for: timeline.date, enabled: displayMovement))
-                        .opacity(luminance)
+                        .opacity(effectiveLuminance)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay {
                             if crtEnabled {
@@ -47,21 +59,21 @@ struct ContentView: View {
                             }
                         }
 
-                    FooterBar(luminance: luminance, crtEnabled: crtEnabled, cycleTheme: {
+                    FooterBar(luminance: effectiveLuminance, mode: mode, crtEnabled: crtEnabled, cycleTheme: {
                         themeName = theme.next.rawValue
                     }, toggleCRT: {
                         crtEnabled.toggle()
                     }, openSettings: {
                         showingSettings = true
                     })
-                    .opacity(luminance)
+                    .opacity(effectiveLuminance)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .overlay {
                     CornerBrackets()
                         .stroke(theme.secondary.opacity(0.65), lineWidth: 1)
-                        .opacity(luminance)
+                        .opacity(effectiveLuminance)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -123,6 +135,7 @@ private struct HeaderBar: View {
     let showBattery: Bool
     let batteryLevel: Float
     let batteryState: UIDevice.BatteryState
+    let mode: ClockLuminanceMode
 
     var body: some View {
         VStack(spacing: 8) {
@@ -137,7 +150,7 @@ private struct HeaderBar: View {
                 if showBattery {
                     BatteryIndicator(level: batteryLevel, state: batteryState)
                 }
-                Text("NIGHT_MODE: ACTIVE")
+                Text("\(mode.title)_MODE: ACTIVE")
             }
             Rectangle().fill(theme.secondary.opacity(0.6)).frame(height: 1)
         }
@@ -188,9 +201,11 @@ private struct ClockDisplay: View {
     let date: Date
     let showDate: Bool
     let availableSize: CGSize
+    let scale: Double
 
+    // Capped so the digits, colon and seconds box never exceed the screen.
     private var digitSize: CGFloat {
-        min(availableSize.width * 0.25, availableSize.height * 0.67)
+        min(availableSize.width * 0.25 * scale, availableSize.height * 0.67 * scale, availableSize.width * 0.3)
     }
 
     var body: some View {
@@ -296,6 +311,7 @@ private struct BlinkingColon: View {
 private struct FooterBar: View {
     @Environment(\.clockTheme) private var theme
     let luminance: Double
+    let mode: ClockLuminanceMode
     let crtEnabled: Bool
     let cycleTheme: () -> Void
     let toggleCRT: () -> Void
@@ -307,7 +323,7 @@ private struct FooterBar: View {
                 .fill(theme.secondary.opacity(0.6))
                 .frame(height: 1)
             HStack {
-                Text("LUM: \(Int((luminance * 100).rounded()))% (NIGHT)")
+                Text("LUM: \(Int((luminance * 100).rounded()))% (\(mode.title))")
                     .foregroundStyle(theme.secondary)
                     .accessibilityIdentifier("clock.luminance")
                 Spacer()
@@ -387,6 +403,13 @@ private struct CornerBrackets: Shape {
 private struct ClockSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.clockTheme) private var theme
+    @Environment(\.calendar) private var calendar
+    @AppStorage("clockScheduleEnabled") private var scheduleEnabled = false
+    @AppStorage("clockNightStart") private var nightStart = 22 * 60
+    @AppStorage("clockDayStart") private var dayStart = 7 * 60
+    @AppStorage("clockDayLuminance") private var dayLuminance = 0.5
+    @AppStorage("clockNightLuminance") private var nightLuminance = 0.15
+    @AppStorage("clockSizeScale") private var sizeScale = 1.0
     @Binding var luminance: Double
     @Binding var timeFormat: String
     @Binding var showDate: Bool
@@ -397,16 +420,26 @@ private struct ClockSettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Slider(value: $luminance, in: 0.1...1, step: 0.05) {
-                        Text("Clock luminance")
-                    } minimumValueLabel: {
-                        Text("10%")
-                    } maximumValueLabel: {
-                        Text("100%")
+                    Toggle("Automatic day/night schedule", isOn: $scheduleEnabled)
+                        .accessibilityIdentifier("settings.scheduleEnabled")
+                    if scheduleEnabled {
+                        DatePicker("Night starts", selection: timeBinding($nightStart), displayedComponents: .hourAndMinute)
+                            .environment(\.timeZone, .gmt)
+                            .accessibilityIdentifier("settings.nightStart")
+                        DatePicker("Day starts", selection: timeBinding($dayStart), displayedComponents: .hourAndMinute)
+                            .environment(\.timeZone, .gmt)
+                            .accessibilityIdentifier("settings.dayStart")
+                        if nightStart == dayStart {
+                            Text("Start times match, so day luminance is used all day.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        LuminanceSlider(title: "Day luminance", value: $dayLuminance, identifier: "settings.dayLuminance")
+                        LuminanceSlider(title: "Night luminance", value: $nightLuminance, identifier: "settings.nightLuminance")
+                    } else {
+                        LuminanceSlider(title: "Clock luminance", value: $luminance, identifier: "settings.luminance")
                     }
-                    .accessibilityIdentifier("settings.luminance")
-                    Text("Clock luminance: \(Int((luminance * 100).rounded()))%")
-                    Text("Dims the clock screen and controls; device brightness is unchanged.")
+                    Text("The schedule uses local time. Luminance dims the clock screen and controls; device brightness is unchanged.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } header: {
@@ -421,6 +454,18 @@ private struct ClockSettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("settings.timeFormat")
+                }
+
+                Section("Clock size") {
+                    Slider(value: $sizeScale, in: 0.5...1.5, step: 0.05) {
+                        Text("Clock size")
+                    } minimumValueLabel: {
+                        Text("50%")
+                    } maximumValueLabel: {
+                        Text("150%")
+                    }
+                    .accessibilityIdentifier("settings.clockSize")
+                    Text("Clock size: \(Int((sizeScale * 100).rounded()))%")
                 }
 
                 Section("Clock display") {
@@ -452,6 +497,41 @@ private struct ClockSettingsView: View {
                 }
             }
         }
+    }
+
+    private func timeBinding(_ minutes: Binding<Int>) -> Binding<Date> {
+        var calendar = calendar
+        // A fixed UTC day lets the picker represent every wall-clock time, even on DST transition days.
+        calendar.timeZone = .gmt
+        return Binding(
+            get: {
+                Date(timeIntervalSince1970: Double(minutes.wrappedValue * 60))
+            },
+            set: { date in
+                let components = calendar.dateComponents([.hour, .minute], from: date)
+                if let hour = components.hour, let minute = components.minute {
+                    minutes.wrappedValue = hour * 60 + minute
+                }
+            }
+        )
+    }
+}
+
+private struct LuminanceSlider: View {
+    let title: String
+    @Binding var value: Double
+    let identifier: String
+
+    var body: some View {
+        Slider(value: $value, in: 0.1...1, step: 0.05) {
+            Text(title)
+        } minimumValueLabel: {
+            Text("10%")
+        } maximumValueLabel: {
+            Text("100%")
+        }
+        .accessibilityIdentifier(identifier)
+        Text("\(title): \(Int((value * 100).rounded()))%")
     }
 }
 

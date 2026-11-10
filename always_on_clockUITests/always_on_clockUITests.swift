@@ -72,6 +72,63 @@ final class always_on_clockUITests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticLuminanceScheduleAndManualRestoration() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments += ["-clockUsageAcknowledged", "YES"]
+        app.launch()
+        app.buttons["clock.settings"].tap()
+        let settings = app.collectionViews.firstMatch
+        let schedule = app.switches["settings.scheduleEnabled"]
+        XCTAssertTrue(schedule.waitForExistence(timeout: 5))
+        if schedule.value as? String == "1" {
+            schedule.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        }
+        let manual = app.sliders["settings.luminance"]
+        XCTAssertTrue(manual.waitForExistence(timeout: 5))
+        manual.adjust(toNormalizedSliderPosition: 0.5)
+        let manualValue = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Clock luminance:'")).firstMatch.label
+        schedule.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertEqual(schedule.value as? String, "1")
+        XCTAssertTrue(app.descendants(matching: .any)["settings.nightStart"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["settings.dayStart"].exists, app.debugDescription)
+        let nightPicker = app.datePickers["settings.nightStart"]
+        let originalTime = nightPicker.buttons.firstMatch.value as? String
+        nightPicker.buttons.firstMatch.tap()
+        XCTAssertTrue(app.pickerWheels.firstMatch.waitForExistence(timeout: 5))
+        app.pickerWheels.firstMatch.swipeUp()
+        app.buttons["PopoverDismissRegion"].tap()
+        let changedTime = nightPicker.buttons.firstMatch.value as? String
+        XCTAssertNotNil(changedTime)
+        XCTAssertNotEqual(changedTime, originalTime)
+        let day = app.sliders["settings.dayLuminance"]
+        let night = app.sliders["settings.nightLuminance"]
+        for _ in 0..<4 where !day.isHittable { settings.swipeUp() }
+        XCTAssertTrue(day.isHittable)
+        day.adjust(toNormalizedSliderPosition: 1)
+        for _ in 0..<4 where !night.isHittable { settings.swipeUp() }
+        XCTAssertTrue(night.isHittable)
+        night.adjust(toNormalizedSliderPosition: 0)
+        app.buttons["settings.done"].tap()
+
+        let readout = app.staticTexts["clock.luminance"]
+        XCTAssertTrue(readout.waitForExistence(timeout: 5))
+        XCTAssertTrue(readout.label.contains("100% (DAY)") || readout.label.contains("10% (NIGHT)"), readout.label)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(readout.waitForExistence(timeout: 5))
+        XCTAssertTrue(readout.label.contains("100% (DAY)") || readout.label.contains("10% (NIGHT)"), readout.label)
+        app.buttons["clock.settings"].tap()
+        XCTAssertEqual(schedule.value as? String, "1")
+        XCTAssertEqual(nightPicker.buttons.firstMatch.value as? String, changedTime)
+        schedule.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(manual.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Clock luminance:'")).firstMatch.label, manualValue)
+        app.buttons["settings.done"].tap()
+        XCTAssertTrue(readout.label.contains("(MANUAL)"))
+    }
+
+    @MainActor
     func testLuminanceDimsClockControls() throws {
         XCUIDevice.shared.orientation = .landscapeLeft
         let app = XCUIApplication()

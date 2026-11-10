@@ -12,6 +12,52 @@ import SwiftUI
 @testable import always_on_clock
 
 struct always_on_clockTests {
+    @Test func luminanceScheduleHandlesBoundariesAndManualMode() {
+        let calendar = Calendar(identifier: .gregorian)
+        let utc = TimeZone.gmt
+        let schedule = ClockLuminanceSchedule(enabled: true, nightStart: 22 * 60, dayStart: 7 * 60,
+                                              manualLuminance: 0.4, dayLuminance: 0.5, nightLuminance: 0.15)
+        let midnight = Date(timeIntervalSince1970: 0)
+        for (seconds, mode) in [(0, ClockLuminanceMode.night), (6 * 3600 + 59 * 60 + 59, .night),
+                                (7 * 3600, .day), (22 * 3600 - 1, .day), (22 * 3600, .night)] {
+            #expect(schedule.mode(at: midnight.addingTimeInterval(Double(seconds)), calendar: calendar, timeZone: utc) == mode)
+        }
+        #expect(schedule.luminance(for: .night) == 0.15)
+        #expect(schedule.luminance(for: .day) == 0.5)
+        let manual = ClockLuminanceSchedule(enabled: false, nightStart: 1320, dayStart: 420,
+                                           manualLuminance: 0.4, dayLuminance: 0.5, nightLuminance: 0.15)
+        #expect(manual.mode(at: midnight, calendar: calendar, timeZone: utc) == .manual)
+        #expect(manual.luminance(for: .manual) == 0.4)
+    }
+
+    @Test func luminanceScheduleHandlesSameDayEqualTimesAndLocalTime() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let utc = TimeZone.gmt
+        let noon = Date(timeIntervalSince1970: 12 * 3600)
+        let sameDay = ClockLuminanceSchedule(enabled: true, nightStart: 8 * 60, dayStart: 18 * 60,
+                                             manualLuminance: 0.4, dayLuminance: 0.5, nightLuminance: 0.15)
+        #expect(sameDay.mode(at: noon, calendar: calendar, timeZone: utc) == .night)
+        #expect(sameDay.mode(at: noon.addingTimeInterval(6 * 3600), calendar: calendar, timeZone: utc) == .day)
+        let equal = ClockLuminanceSchedule(enabled: true, nightStart: 420, dayStart: 420,
+                                           manualLuminance: 0.4, dayLuminance: 0.5, nightLuminance: 0.15)
+        #expect(equal.mode(at: noon, calendar: calendar, timeZone: utc) == .day)
+        #expect(equal.mode(at: noon.addingTimeInterval(-12 * 3600), calendar: calendar, timeZone: utc) == .day)
+        let offset = try #require(TimeZone(secondsFromGMT: 12 * 3600))
+        #expect(sameDay.mode(at: noon, calendar: calendar, timeZone: offset) == .day)
+    }
+
+    @Test func luminanceScheduleFollowsDaylightSavingWallTime() throws {
+        let zone = try #require(TimeZone(identifier: "America/New_York"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let schedule = ClockLuminanceSchedule(enabled: true, nightStart: 22 * 60, dayStart: 7 * 60,
+                                              manualLuminance: 0.4, dayLuminance: 0.5, nightLuminance: 0.15)
+        for (hour, expected) in [(6, ClockLuminanceMode.night), (7, .day)] {
+            let date = try #require(calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: hour)))
+            #expect(schedule.mode(at: date, calendar: calendar, timeZone: zone) == expected)
+        }
+    }
+
     @Test @MainActor func idleTimerTracksSceneActivity() {
         let previousValue = UIApplication.shared.isIdleTimerDisabled
         defer { UIApplication.shared.isIdleTimerDisabled = previousValue }

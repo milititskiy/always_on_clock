@@ -19,6 +19,13 @@ format and clock luminance. Luminance dims the clock screen, including its
 controls (10–100%), not the device display; adjust the device brightness in Control Center. The clock
 defaults to 50% luminance and follows the system time format.
 
+Settings offer an optional automatic day/night luminance schedule. It is off
+by default; when enabled, it uses local time, with night from 22:00 to 07:00,
+50% day luminance and 15% night luminance until changed. Set both start times
+and luminance levels independently. If the start times match, day luminance
+applies all day. Disabling the schedule restores the separate manual setting.
+The schedule changes only the app's appearance, not device brightness.
+
 If the iPhone switches to Apple's StandBy screen, turn off StandBy in the
 iPhone's **Settings > StandBy**, unlock the phone, and reopen the clock. The
 app cannot disable StandBy itself or prevent manual locking, interruptions, or
